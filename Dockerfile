@@ -1,5 +1,5 @@
 # ============================================================
-#  HexStrike AI — Dockerfile COMPLETO (v3 - fixed SSL/mirror)
+#  HexStrike AI — Dockerfile COMPLETO (v4 - IPv4 fix)
 #  Base: kalilinux/kali-rolling
 #
 #  BUILD:
@@ -30,9 +30,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1
 
 # ============================================================
-# CAPA 1 — Usar el mirror HTTP de Kali que ya viene configurado
-#           NO tocar sources.list (ya existe en kali.sources)
-#           Primero instalar ca-certificates para habilitar HTTPS
+# CAPA 0 — Forzar IPv4 en apt
+#           Docker Desktop en Windows no tiene IPv6 funcional.
+#           Sin esto apt resuelve http.kali.org como IPv6 y falla.
+# ============================================================
+RUN printf 'Acquire::ForceIPv4 "true";\n' > /etc/apt/apt.conf.d/99force-ipv4
+
+# ============================================================
+# CAPA 1 — ca-certificates para habilitar HTTPS
 # ============================================================
 RUN apt-get update -o Acquire::https::Verify-Peer=false -qq 2>/dev/null; \
     apt-get install -y --no-install-recommends --fix-missing \
