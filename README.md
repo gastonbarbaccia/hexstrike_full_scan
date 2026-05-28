@@ -70,6 +70,32 @@ Al arrancar, el contenedor ejecuta un health check de las herramientas principal
 
 ---
 
+## Conectar con Claude Code (MCP)
+
+Una vez que el contenedor está corriendo, registrá HexStrike como servidor MCP en Claude Code:
+
+```bash
+claude mcp add --transport stdio --scope user hexstrike-ai -- \
+  docker exec -i hexstrike \
+  /opt/hexstrike-ai/hexstrike-env/bin/python3 \
+  /opt/hexstrike-ai/hexstrike_mcp.py
+```
+
+- `--transport stdio` — el MCP se comunica por stdin/stdout a través de `docker exec`
+- `--scope user` — disponible en todos tus proyectos
+- `-i` — mantiene stdin abierto, necesario para el protocolo MCP
+- No se necesita `--server` porque el default `http://127.0.0.1:8888` ya apunta al servidor dentro del contenedor
+
+Verificar que quedó registrado:
+
+```bash
+claude mcp list
+```
+
+> Si usás la imagen desde Docker Hub (`gastonbarbaccia/hexstrikeia`) el nombre del contenedor debe ser `hexstrike` (tal como lo levanta el comando `docker run` de la sección Run). Si usás otro nombre, ajustá el `docker exec -i <nombre>` en consecuencia.
+
+---
+
 ## Variables de entorno
 
 | Variable | Default | Descripción |
