@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(*)",
+      "mcp__hexstrike-ai__*",
+      "Read(*)",
+      "Write(*)",
+      "Edit(*)"
+    ],
+    "defaultMode": "bypassPermissions"
+  },
+  "theme": "dark"
+}
