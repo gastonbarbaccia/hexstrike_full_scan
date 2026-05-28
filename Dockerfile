@@ -240,9 +240,7 @@ RUN git clone --quiet --depth=1 \
 RUN git clone --quiet --depth=1 \
         https://github.com/devanshbatham/ParamSpider /opt/ParamSpider && \
     pip3 install --break-system-packages \
-        -r /opt/ParamSpider/requirements.txt --quiet 2>/dev/null || true && \
-    ln -sf /opt/ParamSpider/paramspider.py /usr/local/bin/paramspider && \
-    chmod +x /opt/ParamSpider/paramspider.py
+        -e /opt/ParamSpider --quiet 2>/dev/null || true
 
 RUN git clone --quiet --depth=1 \
         https://github.com/blackploit/hash-identifier /opt/hash-identifier && \

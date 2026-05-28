@@ -55,7 +55,7 @@ docker run -d \
   --name hexstrike \
   --cap-add=NET_RAW \
   --cap-add=NET_ADMIN \
-  kali-hexstrike:full
+   gastonbarbaccia/hexstrikeia
 ```
 
 Las capabilities `NET_RAW` y `NET_ADMIN` son necesarias para herramientas que generan paquetes raw (nmap SYN scan, masscan, etc.).
