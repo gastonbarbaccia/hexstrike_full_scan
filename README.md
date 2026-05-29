@@ -1,98 +1,142 @@
-# HexStrike Full Scan
+# HexStrike AI — Docker Security Platform
 
-Imagen Docker basada en **Kali Linux** que empaqueta el framework [HexStrike AI MCP](https://github.com/0x4m4/hexstrike-ai) (v6.0) junto a ~196 herramientas de seguridad ofensiva listas para usar.
+Imagen Docker basada en **Kali Linux** con el framework [HexStrike AI MCP](https://github.com/0x4m4/hexstrike-ai) y ~196 herramientas de seguridad ofensiva listas para usar.
 
-El contenedor expone el servidor de HexStrike en el puerto `8888`, pensado para ser consumido vía MCP (Model Context Protocol) por un agente de IA o directamente por su API HTTP.
+**Novedades v7 (TLS Bypass Edition):**
+- Proxy TLS bypass integrado y automático (bypassea TLS fingerprinting de CDNs como Hostinger, Cloudflare, etc.)
+- Integración nativa con **Burp Suite Pro** via REST API
+- Fix de autenticación de la API key de Burp (key en URL, no en header)
+- Todas las herramientas Go/Ruby/Java ruteadas automáticamente por el proxy
 
-> ⚠️ **Uso responsable.** Estas herramientas son para pentesting autorizado, CTFs, investigación y entornos de laboratorio propios. No las uses contra sistemas para los que no tengas permiso explícito.
-
----
-
-## ¿Qué incluye?
-
-La imagen se construye por capas (ver [Dockerfile](Dockerfile)) e instala, entre otras:
-
-| Categoría | Herramientas |
-|---|---|
-| **Reconocimiento de red** | nmap, masscan, rustscan, naabu, arp-scan, nbtscan, amass, subfinder, fierce, dnsenum, theHarvester |
-| **Web** | gobuster, feroxbuster, ffuf, dirb, dirsearch, nikto, sqlmap, wfuzz, whatweb, wafw00f, wpscan, sslscan, testssl.sh, nuclei, httpx, katana, hakrawler, dalfox, commix |
-| **Passwords / fuerza bruta** | hydra, john, hashcat, medusa, ophcrack, patator, hash-identifier, hashid |
-| **Reversing / forense** | gdb (peda), radare2, binwalk, upx, foremost, scalpel, testdisk, steghide, volatility3, exiftool |
-| **Explotación** | metasploit-framework, exploitdb, pwntools, ropgadget, ropper |
-| **Wireless** | aircrack-ng, reaver, bully, pixiewps, wifite |
-| **Cloud / contenedores** | prowler, scoutsuite, pacu, cloudmapper, trivy, checkov, kube-hunter, aws-cli, kubectl, helm |
-| **OSINT** | spiderfoot, recon-ng, sherlock, holehe |
-| **Active Directory / SMB** | impacket, netexec, smbmap, smbclient, enum4linux, responder, evil-winrm |
-| **Misc** | jwt_tool, tplmap, NoSQLMap, ParamSpider, arjun, sslyze, autorecon |
-
-Runtimes incluidos: **Python 3** (con venv propio para HexStrike), **Node.js 20**, **Go 1.22**, **Rust/Cargo**, **Ruby**, **Java JDK**.
-
-También trae wordlists (`seclists`, `rockyou` ya descomprimido) y las plantillas de `nuclei`.
+> ⚠️ **Uso responsable.** Estas herramientas son para pentesting autorizado, CTFs, bug bounty e investigación. No las uses contra sistemas para los que no tengas permiso explícito.
 
 ---
 
-## Requisitos
+## Inicio rápido
 
-- Docker (en Windows: Docker Desktop)
-- ~15–20 GB de espacio libre en disco para la imagen final
-- La primera build puede tardar **20–40 minutos**
-
----
-
-## Build
-
-```bash
-docker build -t kali-hexstrike:full . 2>&1 | tee build.log
-```
-
-> En Docker Desktop sobre Windows el `Dockerfile` fuerza IPv4 en `apt` (capa 0), porque la resolución IPv6 no funciona y haría fallar la descarga de paquetes.
-
-## Run
+### 1. Levantar el container
 
 ```bash
 docker run -d \
   -p 8888:8888 \
+  --add-host=host.docker.internal:host-gateway \
   --name hexstrike \
   --cap-add=NET_RAW \
   --cap-add=NET_ADMIN \
-   gastonbarbaccia/hexstrikeia
+  -e BURP_API_URL="http://host.docker.internal:1337" \
+  -e BURP_API_KEY="TU_API_KEY_AQUI" \
+  gastonbarbaccia/hexstrikeia:latest
 ```
 
-Las capabilities `NET_RAW` y `NET_ADMIN` son necesarias para herramientas que generan paquetes raw (nmap SYN scan, masscan, etc.).
-
-## Verificar
+### 2. Verificar que está funcionando
 
 ```bash
 curl http://localhost:8888/health
 ```
 
-Al arrancar, el contenedor ejecuta un health check de las herramientas principales y luego levanta el servidor de HexStrike en `0.0.0.0:8888`.
-
----
-
-## Conectar con Claude Code (MCP)
-
-Una vez que el contenedor está corriendo, registrá HexStrike como servidor MCP en Claude Code:
+### 3. Conectar con Claude Code (MCP)
 
 ```bash
-claude mcp add --transport stdio --scope user hexstrike-ai -- \
-  docker exec -i hexstrike \
-  /opt/hexstrike-ai/hexstrike-env/bin/python3 \
-  /opt/hexstrike-ai/hexstrike_mcp.py
+claude mcp add --transport http --scope user hexstrike-ai http://localhost:8888/mcp
 ```
 
-- `--transport stdio` — el MCP se comunica por stdin/stdout a través de `docker exec`
-- `--scope user` — disponible en todos tus proyectos
-- `-i` — mantiene stdin abierto, necesario para el protocolo MCP
-- No se necesita `--server` porque el default `http://127.0.0.1:8888` ya apunta al servidor dentro del contenedor
-
-Verificar que quedó registrado:
+Verificar:
 
 ```bash
 claude mcp list
 ```
 
-> Si usás la imagen desde Docker Hub (`gastonbarbaccia/hexstrikeia`) el nombre del contenedor debe ser `hexstrike` (tal como lo levanta el comando `docker run` de la sección Run). Si usás otro nombre, ajustá el `docker exec -i <nombre>` en consecuencia.
+---
+
+## Integración con Burp Suite Pro
+
+### Configurar Burp (una sola vez)
+
+1. Abrir **Burp Suite Pro**
+2. Ir a `Settings → Suite → REST API`
+3. Configurar:
+
+```
+✅ Service running
+Service URL:  http://0.0.0.0:1337
+✅ API key (crear una nueva con nombre "hexstrike")
+```
+
+4. Copiar el API key generado
+
+### Levantar el container con Burp
+
+```bash
+docker run -d \
+  -p 8888:8888 \
+  --add-host=host.docker.internal:host-gateway \
+  --name hexstrike \
+  --cap-add=NET_RAW \
+  --cap-add=NET_ADMIN \
+  -e BURP_API_URL="http://host.docker.internal:1337" \
+  -e BURP_API_KEY="TU_API_KEY_AQUI" \
+  gastonbarbaccia/hexstrikeia:latest
+```
+
+> `host.docker.internal` resuelve automáticamente a la IP del host donde corre Burp.  
+> El flag `--add-host=host.docker.internal:host-gateway` es necesario en Linux (en macOS/Windows ya viene por defecto).
+
+### Verificar conectividad Burp → Container
+
+```bash
+# Desde tu terminal (host):
+curl http://127.0.0.1:1337/TU_API_KEY/v0.1/
+# Debe responder con la documentación de la API de Burp ✅
+```
+
+### Por qué puede fallar Burp Scanner
+
+El CDN de Hostinger (y otros) implementan **TLS fingerprinting** que bloquea el scanner de Burp (Java/Bouncy Castle). Para resolverlo:
+
+```
+Burp Suite Pro → Settings → Scanner → Scan details
+→ Marcar: "Use embedded browser for all scanning"
+```
+
+Con esto Burp usa Chromium real y bypassea el fingerprinting.
+
+---
+
+## TLS Bypass Proxy (integrado)
+
+El container incluye un proxy TLS standalone en el **puerto 8118** que arranca automáticamente. Bypassea el TLS fingerprinting usando `curl` como backend (OpenSSL), que no es detectado por los CDNs.
+
+**Se activa solo al iniciar el container.** Logs en `/var/log/tls_bypass.log`.
+
+### Herramientas que se benefician automáticamente
+
+Las variables `http_proxy` y `https_proxy` ya están configuradas dentro del container, por lo que estas herramientas usan el bypass sin configuración extra:
+
+| Herramienta | Estado sin proxy | Estado con proxy |
+|---|---|---|
+| Katana | ❌ TLS error | ✅ Funciona |
+| Gobuster | ❌ TLS error | ✅ Funciona |
+| Dalfox | ❌ TLS error | ✅ Funciona |
+| SQLMap | ❌ SSL error | ✅ Funciona |
+| Metasploit (Ruby) | ❌ TLS error | `set PROXIES HTTP:127.0.0.1:8118` |
+
+### Configurar el proxy manualmente en herramientas
+
+Para herramientas que no respetan las env vars:
+
+```bash
+# Metasploit
+msf> set PROXIES HTTP:127.0.0.1:8118
+
+# curl explícito
+curl -sk --proxy http://127.0.0.1:8118 https://objetivo.com
+
+# Nuclei
+nuclei -proxy http://127.0.0.1:8118 -u https://objetivo.com
+
+# Gobuster (si no lo toma del env)
+gobuster dir -u https://objetivo.com --proxy http://127.0.0.1:8118 -k
+```
 
 ---
 
@@ -100,53 +144,126 @@ claude mcp list
 
 | Variable | Default | Descripción |
 |---|---|---|
-| `HEXSTRIKE_HOST` | `0.0.0.0` | Host de escucha del servidor |
-| `HEXSTRIKE_PORT` | `8888` | Puerto del servidor |
+| `HEXSTRIKE_HOST` | `0.0.0.0` | Host del servidor HexStrike |
+| `HEXSTRIKE_PORT` | `8888` | Puerto del servidor HexStrike |
+| `BURP_API_URL` | `http://127.0.0.1:1337` | URL base de la REST API de Burp Suite Pro |
+| `BURP_API_KEY` | _(vacío)_ | API key de Burp Suite Pro |
+| `TLS_BYPASS_PORT` | `8118` | Puerto del proxy TLS bypass |
+| `http_proxy` / `https_proxy` | `http://127.0.0.1:8118` | Proxy automático para todas las herramientas |
 
 ---
 
-## Archivos del repo
+## Herramientas incluidas
+
+| Categoría | Herramientas |
+|---|---|
+| **Reconocimiento** | nmap, masscan, rustscan, naabu, arp-scan, subfinder, amass, fierce, dnsenum, theHarvester |
+| **Web** | gobuster, ffuf, feroxbuster, dirsearch, nikto, sqlmap, wfuzz, nuclei, httpx, katana, hakrawler, dalfox, wafw00f, wpscan, whatweb, testssl.sh |
+| **Burp Suite Pro** | Integración REST API (scan activo, crawl, audit) |
+| **Parámetros / API** | arjun, paramspider, x8 |
+| **Passwords** | hydra, john, hashcat, medusa, patator |
+| **Reversing / Forense** | gdb (peda), radare2, binwalk, volatility3, exiftool, foremost |
+| **Explotación** | metasploit-framework, exploitdb, pwntools, ropgadget |
+| **Cloud** | prowler, scoutsuite, pacu, trivy, checkov, kube-hunter, aws-cli, kubectl |
+| **OSINT** | spiderfoot, recon-ng, sherlock, holehe |
+| **AD / SMB** | impacket, netexec, smbmap, enum4linux, responder, evil-winrm |
+| **TLS Bypass** | Proxy standalone Python (puerto 8118, auto-start) |
+
+Runtimes: Python 3, Node.js 20, Go 1.22, Rust, Ruby, Java JDK.  
+Wordlists: `seclists`, `rockyou` (descomprimido), plantillas Nuclei.
+
+---
+
+## Build desde cero
+
+Si querés reconstruir la imagen completa (tarda ~30–40 min):
+
+```bash
+# Build completa (16 capas, imagen ~15GB)
+docker build -t gastonbarbaccia/hexstrikeia:latest . 2>&1 | tee build.log
+```
+
+Para actualizar solo las capas nuevas sobre la imagen existente (rápido, ~30 segundos):
+
+```bash
+# Build incremental sobre imagen ya existente
+docker build -f Dockerfile.tls \
+  -t gastonbarbaccia/hexstrikeia:latest \
+  -t gastonbarbaccia/hexstrikeia:v7-tls-bypass \
+  .
+```
+
+Push a Docker Hub:
+
+```bash
+docker push gastonbarbaccia/hexstrikeia:latest
+```
+
+---
+
+## Solución de problemas
+
+### El container no arranca
+
+```bash
+docker logs hexstrike
+```
+
+El healthcheck tiene 30s de gracia. Si falla, revisar el log del proxy:
+
+```bash
+docker exec hexstrike cat /var/log/tls_bypass.log
+```
+
+### Burp Scanner no puede conectar al objetivo
+
+El scanner de Burp usa Java/Bouncy Castle y es bloqueado por TLS fingerprinting. Dos soluciones:
+
+1. **Recomendado**: En Burp → `Settings → Scanner → Use embedded browser for all scanning`
+2. En Burp → `Settings → Network → Upstream Proxy` → agregar `127.0.0.1:8118` *(requiere que el container esté en la misma red que el host)*
+
+### Error 503 al usar `burpsuite_scan` en HexStrike
+
+Verificar que Burp esté abierto y con la REST API activa en `0.0.0.0:1337`:
+
+```bash
+curl http://127.0.0.1:1337/TU_API_KEY/v0.1/
+# Debe responder con JSON de la API ✅
+```
+
+### Herramienta X no conecta al objetivo
+
+Probar usando el proxy explícitamente:
+
+```bash
+docker exec hexstrike curl -sk --proxy http://127.0.0.1:8118 https://objetivo.com
+```
+
+Si funciona, la herramienta no está leyendo las variables de entorno del proxy. Agregar el flag de proxy correspondiente.
+
+---
+
+## Archivos del repositorio
 
 | Archivo | Descripción |
 |---|---|
-| [Dockerfile](Dockerfile) | Definición de la imagen completa (16 capas) |
-| [install_hexstrike_tools.sh](install_hexstrike_tools.sh) | Instalador alternativo de las 196 herramientas sobre una imagen Kali ya existente (21 categorías) |
-| `build.log` | Log de la última build (generado por `tee`) |
+| `Dockerfile` | Build completa desde cero (Kali + 196 herramientas, ~15GB) |
+| `Dockerfile.tls` | Build incremental: agrega TLS bypass sobre imagen existente |
+| `tls_bypass_proxy.py` | Proxy TLS standalone (Python puro, sin dependencias externas) |
+| `tls_bypass_addon.py` | Addon alternativo para mitmproxy (referencia) |
+| `hexstrike_server.py` | Servidor HexStrike con fix de autenticación Burp API key |
+| `install_hexstrike_tools.sh` | Instalador alternativo sobre Kali existente (sin Docker) |
+| `PROMPT_MAESTRO_PENTEST.md` | Prompts maestros para pentesting con IA |
 
 ---
 
-## Notas
+## Créditos
 
-- El servidor de HexStrike corre dentro de un virtualenv en `/opt/hexstrike-ai/hexstrike-env`.
-- Algunas instalaciones del `Dockerfile` usan `|| true` para que la build no falle si una herramienta puntual no instala; revisá `build.log` si echás en falta alguna.
-- El `HEALTHCHECK` de Docker reintenta contra `/health` con un período de gracia de 90s al inicio.
-
----
-
-## Créditos y atribución
-
-Este repositorio es un **empaquetado en Docker**: no reimplementa el framework, sino que descarga e instala el proyecto original junto con herramientas de terceros.
-
-- **HexStrike AI** — [github.com/0x4m4/hexstrike-ai](https://github.com/0x4m4/hexstrike-ai). Todo el crédito del framework MCP es de sus autores.
-- El resto de las herramientas (nmap, nuclei, metasploit, sqlmap, etc.) pertenecen a sus respectivos autores y mantienen sus propias licencias.
-
-Antes de redistribuir la imagen revisá las licencias de cada componente, ya que algunas tienen restricciones (p. ej. Metasploit Framework usa la licencia BSD de 3 cláusulas con condiciones particulares para su versión community).
+- **HexStrike AI** — [github.com/0x4m4/hexstrike-ai](https://github.com/0x4m4/hexstrike-ai) — todo el crédito del framework MCP es de sus autores.
+- Las herramientas incluidas (nmap, nuclei, metasploit, sqlmap, etc.) pertenecen a sus respectivos autores y licencias.
 
 ## Licencia
 
-El contenido propio de este repositorio (`Dockerfile`, `install_hexstrike_tools.sh` y este README) se publica bajo la licencia **MIT**.
+El contenido propio de este repositorio (`Dockerfile`, `tls_bypass_proxy.py`, `README.md`, etc.) se publica bajo **MIT**.
 
-```
-MIT License
-
-Copyright (c) 2026 Gastón Barbaccia
-
-Se concede permiso, de forma gratuita, a cualquier persona que obtenga una copia
-de este software y los archivos de documentación asociados, para usarlos sin
-restricción, incluyendo los derechos de usar, copiar, modificar, fusionar,
-publicar, distribuir, sublicenciar y/o vender copias del software.
-
-EL SOFTWARE SE PROPORCIONA "TAL CUAL", SIN GARANTÍA DE NINGÚN TIPO.
-```
-
-> La licencia MIT aplica **únicamente** al código de empaquetado de este repo, no a HexStrike AI ni a las herramientas de terceros que se instalan dentro de la imagen.
+> La licencia MIT aplica únicamente al código de empaquetado, no a HexStrike AI ni a las herramientas de terceros instaladas en la imagen.

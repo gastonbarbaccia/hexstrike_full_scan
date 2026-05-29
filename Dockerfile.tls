@@ -1,0 +1,82 @@
+# ============================================================
+#  HexStrike AI — TLS Bypass Layer
+#  Extiende la imagen existente agregando:
+#    1. mitmproxy (ya instalado en la imagen base)
+#    2. tls_bypass_addon.py
+#    3. hexstrike_server.py con fix de Burp API key
+#    4. Script de startup actualizado con proxy automático
+#
+#  BUILD:
+#    docker build -f Dockerfile.tls -t gastonbarbaccia/hexstrikeia:latest .
+#
+#  PUSH:
+#    docker push gastonbarbaccia/hexstrikeia:latest
+# ============================================================
+
+FROM gastonbarbaccia/hexstrikeia:latest
+
+# ── Variables de entorno del proxy TLS ───────────────────────
+ENV TLS_BYPASS_PORT=8118 \
+    http_proxy=http://127.0.0.1:8118 \
+    https_proxy=http://127.0.0.1:8118 \
+    HTTP_PROXY=http://127.0.0.1:8118 \
+    HTTPS_PROXY=http://127.0.0.1:8118
+
+# ── Copiar archivos actualizados ──────────────────────────────
+COPY tls_bypass_proxy.py     /opt/hexstrike-ai/tls_bypass_proxy.py
+COPY tls_bypass_addon.py     /opt/hexstrike-ai/tls_bypass_addon.py
+COPY hexstrike_server.py     /opt/hexstrike-ai/hexstrike_server.py
+
+# ── Script de startup con proxy automático ───────────────────
+RUN printf '#!/bin/bash\n\
+echo "============================================"\n\
+echo " HexStrike AI MCP v7.0 — TLS Bypass Edition"\n\
+echo "============================================"\n\
+echo ""\n\
+\n\
+# ── Iniciar TLS Bypass Proxy ──────────────────────────────\n\
+echo "[*] Iniciando TLS Bypass Proxy (standalone) en puerto 8118..."\n\
+python3 /opt/hexstrike-ai/tls_bypass_proxy.py > /var/log/tls_bypass.log 2>&1 &\n\
+MITM_PID=$!\n\
+\n\
+# Esperar hasta 8s a que el proxy esté ready\n\
+READY=0\n\
+for i in $(seq 1 8); do\n\
+    if curl -sk --proxy http://127.0.0.1:8118 --max-time 2 \\\n\
+       https://stock.devcode.com.ar/login.php -o /dev/null 2>/dev/null; then\n\
+        echo "[+] TLS Bypass Proxy listo y verificado (PID=$MITM_PID)"\n\
+        READY=1\n\
+        break\n\
+    fi\n\
+    sleep 1\n\
+done\n\
+[ $READY -eq 0 ] && echo "[!] Proxy iniciado (PID=$MITM_PID) — verificar /var/log/tls_bypass.log"\n\
+\n\
+# Configurar proxychains\n\
+printf "[ProxyList]\\nhttp 127.0.0.1 8118\\n" > /etc/proxychains4.conf\n\
+\n\
+# ── Verificar herramientas ───────────────────────────────\n\
+TOOLS="nmap nuclei sqlmap gobuster feroxbuster ffuf httpx subfinder nikto hydra john katana dalfox"\n\
+echo "Herramientas disponibles:"\n\
+for t in $TOOLS; do\n\
+    if command -v "$t" &>/dev/null || [ -f "/root/go/bin/$t" ]; then\n\
+        echo "  [OK] $t"\n\
+    else\n\
+        echo "  [--] $t"\n\
+    fi\n\
+done\n\
+echo ""\n\
+echo "[*] Iniciando HexStrike server en 0.0.0.0:8888..."\n\
+echo ""\n\
+cd /opt/hexstrike-ai\n\
+exec hexstrike-env/bin/python3 hexstrike_server.py\n\
+' > /usr/local/bin/hexstrike-start.sh && \
+    chmod +x /usr/local/bin/hexstrike-start.sh
+
+EXPOSE 8888
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=5 \
+    CMD curl -f http://localhost:8888/health || exit 1
+
+WORKDIR /opt/hexstrike-ai
+CMD ["/usr/local/bin/hexstrike-start.sh"]

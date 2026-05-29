@@ -1,0 +1,25 @@
+# Logs de build y runtime
+build.log
+*.log
+
+# Reportes de pentesting (datos sensibles)
+reports/
+
+# Archivos temporales
+*.tmp
+*.bak
+__pycache__/
+*.pyc
+*.pyo
+
+# Claude Code
+.claude/
+
+# Credenciales y configuración local
+.env
+.env.*
+secrets.*
+
+# Certs TLS generados en runtime
+/tmp/hs_*.crt
+/tmp/hs_*.key

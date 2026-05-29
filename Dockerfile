@@ -27,7 +27,16 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HEXSTRIKE_HOST=0.0.0.0 \
     HEXSTRIKE_PORT=8888 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    # ── TLS Bypass Proxy (bypasea fingerprinting de CDNs como Hostinger) ──
+    TLS_BYPASS_PORT=8118 \
+    http_proxy=http://127.0.0.1:8118 \
+    https_proxy=http://127.0.0.1:8118 \
+    HTTP_PROXY=http://127.0.0.1:8118 \
+    HTTPS_PROXY=http://127.0.0.1:8118 \
+    # Herramientas que leen estas vars específicas
+    MITMPROXY_ADDR=127.0.0.1:8118 \
+    PROXYCHAINS_PROXY=http://127.0.0.1:8118
 
 # ============================================================
 # CAPA 0 — Forzar IPv4 en apt
@@ -189,6 +198,7 @@ RUN pip3 install --break-system-packages --quiet \
         pymisp stix2 taxii2-client \
         requests beautifulsoup4 lxml httpx \
         mobsf \
+        mitmproxy \
     2>/dev/null || true
 
 # ============================================================
@@ -333,22 +343,52 @@ RUN curl -fsSL \
 # ============================================================
 # CAPA 16 — Script de startup con health check de herramientas
 # ============================================================
+
+COPY hexstrike_server.py      /opt/hexstrike-ai/hexstrike_server.py
+COPY tls_bypass_addon.py     /opt/hexstrike-ai/tls_bypass_addon.py
+
 RUN printf '#!/bin/bash\n\
+set -e\n\
 echo "============================================"\n\
 echo " HexStrike AI MCP v6.0 — Kali Linux"\n\
 echo "============================================"\n\
 echo ""\n\
-TOOLS="nmap nuclei sqlmap gobuster feroxbuster ffuf httpx subfinder nikto hydra john"\n\
+\n\
+# ── TLS Bypass Proxy (mitmproxy + curl addon) ────────────────\n\
+echo "[*] Iniciando TLS Bypass Proxy en 0.0.0.0:8118..."\n\
+mitmdump \\\n\
+    --listen-host 0.0.0.0 \\\n\
+    --listen-port 8118 \\\n\
+    --ssl-insecure \\\n\
+    -s /opt/hexstrike-ai/tls_bypass_addon.py \\\n\
+    --quiet \\\n\
+    > /var/log/tls_bypass.log 2>&1 &\n\
+MITM_PID=$!\n\
+\n\
+# Esperar a que el proxy esté listo (max 10s)\n\
+for i in $(seq 1 10); do\n\
+    if curl -s --max-time 1 http://127.0.0.1:8118 >/dev/null 2>&1; then\n\
+        echo "[+] TLS Bypass Proxy listo (PID=$MITM_PID)"\n\
+        break\n\
+    fi\n\
+    sleep 1\n\
+done\n\
+\n\
+# Configurar proxychains para usar el bypass proxy\n\
+printf "[ProxyList]\\nhttp 127.0.0.1 8118\\n" > /etc/proxychains4.conf\n\
+\n\
+# ── Health check de herramientas ─────────────────────────────\n\
+TOOLS="nmap nuclei sqlmap gobuster feroxbuster ffuf httpx subfinder nikto hydra john katana dalfox"\n\
 echo "Verificando herramientas principales:"\n\
 for t in $TOOLS; do\n\
     if command -v "$t" &>/dev/null || [ -f "/root/go/bin/$t" ]; then\n\
-        echo "  OK $t"\n\
+        echo "  [OK] $t"\n\
     else\n\
-        echo "  MISSING $t"\n\
+        echo "  [--] $t (no instalado)"\n\
     fi\n\
 done\n\
 echo ""\n\
-echo "Iniciando HexStrike server en 0.0.0.0:8888..."\n\
+echo "[*] Iniciando HexStrike server en 0.0.0.0:8888..."\n\
 echo ""\n\
 cd /opt/hexstrike-ai\n\
 exec hexstrike-env/bin/python3 hexstrike_server.py\n\
