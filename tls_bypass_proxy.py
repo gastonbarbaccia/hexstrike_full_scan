@@ -51,8 +51,12 @@ def curl_request(url: str, method: str = "GET",
     """Ejecuta la petición real via curl y devuelve (status, headers, body)"""
     cmd = [
         "curl", "-sk", "--max-time", str(TIMEOUT),
-        "--noproxy", "*",   # ← evita el loop: curl no usa el proxy para llamadas internas
-        "-A", UA, "-X", method, "-D", "-", "--compressed",
+        "--noproxy", "*",    # evita el loop
+        "--http2",           # fuerza HTTP/2; evita intentos HTTP/3 QUIC (UDP bloqueado en Docker)
+        "--ipv4",            # evita IPv6 unreachable en Docker que causa HTTP 000
+        "-A", UA, "-X", method,
+        "-D", "-",           # headers de respuesta en stdout
+        "--compressed",
     ]
     for k, v in (headers or {}).items():
         if k.lower() not in SKIP_REQ:
@@ -61,7 +65,7 @@ def curl_request(url: str, method: str = "GET",
         cmd += ["--data-binary", "@-"]
     cmd.append(url)
 
-    # Eliminar vars de proxy del entorno del subprocess
+    # Eliminar vars de proxy del entorno del subprocess para evitar loops
     env = os.environ.copy()
     for var in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "all_proxy"):
         env.pop(var, None)
@@ -69,19 +73,33 @@ def curl_request(url: str, method: str = "GET",
     try:
         proc = subprocess.run(cmd, input=body, capture_output=True, timeout=TIMEOUT + 5, env=env)
         raw  = proc.stdout
-        sep  = b"\r\n\r\n"
-        idx  = raw.rfind(sep)
-        if idx == -1:
+
+        if not raw:
+            return 502, {}, b"No response from curl (check connectivity)"
+
+        # Separar el ÚLTIMO bloque de headers del body
+        # Buscamos el patron "HTTP/x.x NNN" para encontrar el último header block
+        import re as _re
+        # Encontrar todas las posiciones donde empieza un bloque HTTP/
+        http_starts = [m.start() for m in _re.finditer(rb'HTTP/[12][\. ]', raw)]
+
+        if not http_starts:
             return 200, {}, raw
 
-        hdr_raw   = raw[:idx]
-        resp_body = raw[idx + 4:]
+        # Tomar el último bloque HTTP (tras posibles redirects)
+        last_start = http_starts[-1]
+        last_block  = raw[last_start:]
 
-        # Último bloque de headers (tras posibles redirects)
-        blocks   = hdr_raw.split(b"\r\n\r\n")
-        hdr_text = blocks[-1].decode("utf-8", errors="replace")
-        lines    = hdr_text.splitlines()
+        # Separar headers de body en este último bloque
+        sep_idx = last_block.find(b"\r\n\r\n")
+        if sep_idx == -1:
+            return 200, {}, last_block
 
+        hdr_text  = last_block[:sep_idx].decode("utf-8", errors="replace")
+        resp_body = last_block[sep_idx + 4:]
+        lines     = hdr_text.splitlines()
+
+        # Parsear status
         status = 200
         if lines and lines[0].startswith("HTTP/"):
             try:
@@ -89,6 +107,7 @@ def curl_request(url: str, method: str = "GET",
             except:
                 pass
 
+        # Parsear headers de respuesta
         resp_hdrs = {}
         for line in lines[1:]:
             if ":" in line:
@@ -115,19 +134,19 @@ def build_response(status: int, headers: dict, body: bytes) -> bytes:
     return "".join(lines).encode() + body
 
 
-def recv_all(sock, timeout=5.0) -> bytes:
-    """Lee hasta encontrar \r\n\r\n (fin de headers)"""
+def recv_all(sock, timeout=15.0) -> bytes:
+    """Lee hasta encontrar \r\n\r\n (fin de headers HTTP)"""
     sock.settimeout(timeout)
     data = b""
     try:
         while True:
-            chunk = sock.recv(4096)
+            chunk = sock.recv(8192)
             if not chunk:
                 break
             data += chunk
-            if b"\r\n\r\n" in data:
+            if b"\r\n\r\n" in data or b"\n\n" in data:
                 break
-    except (socket.timeout, ssl.SSLError):
+    except (socket.timeout, ssl.SSLError, OSError):
         pass
     return data
 
@@ -182,31 +201,41 @@ def handle_connect(sock, connect_host: str, connect_port: int):
 
     # 2. Generar cert para el host
     cert_file, key_file = gen_cert(connect_host)
+    if not os.path.exists(cert_file):
+        return
 
-    # 3. Envolver en SSL
+    # 3. SSL context compatible con OpenSSL 3.x
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.minimum_version   = ssl.TLSVersion.TLSv1_2
+    ctx.set_ciphers("DEFAULT:@SECLEVEL=1")  # permisivo para clientes variados
     try:
         ctx.load_cert_chain(cert_file, key_file)
     except Exception:
         return
 
+    # 4. Envolver socket en SSL (con timeout para no bloquear indefinidamente)
+    sock.settimeout(10)
     try:
         ssl_sock = ctx.wrap_socket(sock, server_side=True)
     except (ssl.SSLError, OSError):
         return
 
-    # 4. Leer el HTTP request dentro del tunnel TLS
-    raw = recv_all(ssl_sock, timeout=10)
+    # 5. Leer HTTP request dentro del tunnel TLS
+    raw = recv_all(ssl_sock, timeout=15)
     if not raw:
-        ssl_sock.close()
+        try: ssl_sock.close()
+        except: pass
         return
 
     method, path, _, hdrs, body = parse_request(raw)
-    if not method:
-        ssl_sock.close()
+    if not method or not path:
+        try: ssl_sock.close()
+        except: pass
         return
 
-    url = f"https://{connect_host}:{connect_port}{path}"
+    # Usar 443 solo si el puerto es diferente al estándar
+    port_suffix = f":{connect_port}" if connect_port not in (443, 80) else ""
+    url = f"https://{connect_host}{port_suffix}{path}"
 
     status, resp_hdrs, resp_body = curl_request(url, method, hdrs, body or None)
     try:
@@ -214,7 +243,8 @@ def handle_connect(sock, connect_host: str, connect_port: int):
     except:
         pass
     finally:
-        ssl_sock.close()
+        try: ssl_sock.close()
+        except: pass
 
 
 def handle_client(conn, addr):

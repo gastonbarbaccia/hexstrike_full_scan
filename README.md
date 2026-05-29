@@ -115,10 +115,18 @@ Las variables `http_proxy` y `https_proxy` ya están configuradas dentro del con
 | Herramienta | Estado sin proxy | Estado con proxy |
 |---|---|---|
 | Katana | ❌ TLS error | ✅ Funciona |
-| Gobuster | ❌ TLS error | ✅ Funciona |
+| Gobuster | ❌ TLS error | ✅ Funciona (ver nota) |
 | Dalfox | ❌ TLS error | ✅ Funciona |
 | SQLMap | ❌ SSL error | ✅ Funciona |
+| Nikto | ❌ TLS error | ✅ con `-useproxy http://127.0.0.1:8118` |
 | Metasploit (Ruby) | ❌ TLS error | `set PROXIES HTTP:127.0.0.1:8118` |
+
+> **Nota Gobuster — CDNs que usan 403 como "no encontrado":** Algunos CDNs (ej. Hostinger hcdn) devuelven HTTP 403 tanto para rutas inexistentes como para acceso denegado. Gobuster detecta el 403 como baseline y filtra todos los resultados. Solución: usar `--exclude-length <N>` con el tamaño de la página 403 del CDN, o `-s 200,301,302` para mostrar solo respuestas válidas.
+>
+> ```bash
+> gobuster dir -u https://objetivo.com --proxy http://127.0.0.1:8118 \
+>   -k -s '200,301,302' --exclude-length 787
+> ```
 
 ### Configurar el proxy manualmente en herramientas
 
@@ -134,8 +142,12 @@ curl -sk --proxy http://127.0.0.1:8118 https://objetivo.com
 # Nuclei
 nuclei -proxy http://127.0.0.1:8118 -u https://objetivo.com
 
-# Gobuster (si no lo toma del env)
-gobuster dir -u https://objetivo.com --proxy http://127.0.0.1:8118 -k
+# Gobuster (con filtro para CDNs)
+gobuster dir -u https://objetivo.com --proxy http://127.0.0.1:8118 -k \
+  -s '200,301,302' --exclude-length 787
+
+# Nikto
+nikto -h https://objetivo.com -ssl -useproxy http://127.0.0.1:8118
 ```
 
 ---
@@ -189,7 +201,7 @@ Para actualizar solo las capas nuevas sobre la imagen existente (rápido, ~30 se
 # Build incremental sobre imagen ya existente
 docker build -f Dockerfile.tls \
   -t gastonbarbaccia/hexstrikeia:latest \
-  -t gastonbarbaccia/hexstrikeia:v7-tls-bypass \
+  -t gastonbarbaccia/hexstrikeia:v7.1-ssl-fix \
   .
 ```
 
