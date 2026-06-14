@@ -54,6 +54,7 @@ claude auth status
 ```bash
 docker run -d \
   -p 8888:8888 \
+  -p 8118:8118 \
   --add-host=host.docker.internal:host-gateway \
   --name hexstrike \
   --cap-add=NET_RAW \
@@ -63,6 +64,7 @@ docker run -d \
   gastonbarbaccia/hexstrikeia:latest
 ```
 
+> `-p 8118:8118` expone el proxy TLS bypass al host — necesario para que las tools locales (dalfox, nuclei, nikto, etc.) bypaseen el fingerprinting de WAFs como Cloudflare y Hostinger hcdn. Sin esto, las tools se cuelgan esperando respuestas bloqueadas silenciosamente.  
 > Si no usas Burp Suite Pro, podés omitir las variables `-e BURP_API_URL` y `-e BURP_API_KEY`.  
 > `--add-host=host.docker.internal:host-gateway` es necesario en Linux. En macOS/Windows ya viene por defecto.
 
@@ -320,11 +322,28 @@ targets:
 # Ejecutar un solo target
 ./schedule_pentest.sh run-target MiSitio
 
-# Ver historial de sesiones
+# ── Monitoreo del scan activo ─────────────────────────
+
+# Snapshot: fase actual, módulos ✓/●/○ y hallazgos
+./schedule_pentest.sh progress
+
+# Modo live: se refresca cada 3s (Ctrl+C para salir)
+./schedule_pentest.sh progress -f
+
+# Output crudo de Claude en tiempo real — cada tool call,
+# resultado y error. Ideal para debug o ver qué hace Claude
+./schedule_pentest.sh tail
+
+# ─────────────────────────────────────────────────────
+
+# Ver historial de sesiones anteriores
 ./schedule_pentest.sh status
 
-# Ver logs
+# Ver logs (últimas N líneas)
 ./schedule_pentest.sh logs 100
+
+# Rotar sesiones antiguas (según keep_reports en el YAML)
+./schedule_pentest.sh rotate
 
 # Eliminar cron jobs
 ./schedule_pentest.sh remove
@@ -466,16 +485,6 @@ Si querés reconstruir la imagen completa (tarda ~30–40 min):
 docker build -t gastonbarbaccia/hexstrikeia:latest . 2>&1 | tee build.log
 ```
 
-Para actualizar solo las capas nuevas sobre la imagen existente (~30 segundos):
-
-```bash
-# Build incremental: agrega TLS bypass sobre imagen existente
-docker build -f Dockerfile.tls \
-  -t gastonbarbaccia/hexstrikeia:latest \
-  -t gastonbarbaccia/hexstrikeia:v7.1 \
-  .
-```
-
 Push a Docker Hub:
 
 ```bash
@@ -553,8 +562,7 @@ curl http://localhost:8888/health
 
 | Archivo | Descripción |
 |---|---|
-| `Dockerfile` | Build completa desde cero (Kali + 196 herramientas, ~15GB) |
-| `Dockerfile.tls` | Build incremental: agrega TLS bypass sobre imagen existente |
+| `Dockerfile` | Build completa desde cero (Kali + 196 herramientas, ~15GB) — incluye TLS bypass integrado |
 | `tls_bypass_proxy.py` | Proxy TLS standalone (Python puro, sin dependencias externas) |
 | `tls_bypass_addon.py` | Addon alternativo para mitmproxy (referencia) |
 | `hexstrike_server.py` | Servidor HexStrike con fix de autenticación Burp API key |
