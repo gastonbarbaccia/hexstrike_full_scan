@@ -6876,6 +6876,7 @@ class EnhancedCommandExecutor:
             self.process = subprocess.Popen(
                 self.command,
                 shell=True,
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -13095,8 +13096,8 @@ def dalfox():
         url = params.get("url", "")
         pipe_mode = params.get("pipe_mode", False)
         blind = params.get("blind", False)
-        mining_dom = params.get("mining_dom", True)
-        mining_dict = params.get("mining_dict", True)
+        mining_dom = params.get("mining_dom", False)
+        mining_dict = params.get("mining_dict", False)
         custom_payload = params.get("custom_payload", "")
         additional_args = params.get("additional_args", "")
 
@@ -14245,10 +14246,13 @@ def burpsuite_pro():
 
     hdrs = {"Content-Type": "application/json"}
 
+    # Burp corre en el host (host.docker.internal); no debe enrutar por el proxy TLS interno
+    _NO_PROXY = {"http": None, "https": None}
+
     # 1. Verificar que Burp esté levantado
     try:
         import requests as _req
-        ping = _req.get(f"{_BURP_URL}/v0.1/", headers=hdrs, timeout=5)
+        ping = _req.get(f"{_BURP_URL}/v0.1/", headers=hdrs, timeout=5, proxies=_NO_PROXY)
         if ping.status_code != 200:
             return jsonify({"error": f"Burp API no disponible en {_BURP_URL}. Status: {ping.status_code}"}), 503
     except Exception as conn_err:
@@ -14257,11 +14261,21 @@ def burpsuite_pro():
 
     # 2. Crear el scan
     try:
+        # Mapear scan_type al nombre de configuración que Burp Pro REST API v0.1 espera
+        _SCAN_CFG_MAP = {
+            "crawl_and_audit": "Crawl and audit - balanced",
+            "crawl":           "Crawl only",
+            "passive":         "Crawl only",
+            "audit_fast":      "Audit only - fast",
+            "audit":           "Audit only - fast",
+        }
+        burp_config_name = _SCAN_CFG_MAP.get(scan_cfg, "Crawl and audit - balanced")
         resp = _req.post(
             f"{_BURP_URL}/v0.1/scan",
-            json={"urls": [target], "scan_configurations": [{"type": scan_cfg}]},
+            json={"urls": [target], "scan_configuration": [{"name": burp_config_name}]},
             headers=hdrs,
-            timeout=30
+            timeout=30,
+            proxies=_NO_PROXY
         )
         if resp.status_code not in (200, 201):
             return jsonify({"error": f"Burp rechazó el scan: {resp.text}"}), 500
@@ -14276,7 +14290,7 @@ def burpsuite_pro():
     for attempt in range(120):
         time.sleep(5)
         try:
-            r = _req.get(f"{_BURP_URL}/v0.1/scan/{scan_id}", headers=hdrs, timeout=10)
+            r = _req.get(f"{_BURP_URL}/v0.1/scan/{scan_id}", headers=hdrs, timeout=10, proxies=_NO_PROXY)
             result = r.json()
             status = result.get("scan_status", "")
             logger.info(f"[BURP PRO] attempt={attempt+1} scan_status={status}")

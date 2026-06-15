@@ -49,7 +49,16 @@ claude auth status
 
 ## Inicio rápido
 
-### 1. Levantar el container
+### 1. Configurar variables de entorno
+
+```bash
+cp .env.example .env
+# Editá .env con tu API key de Burp Suite Pro
+```
+
+El archivo `.env` se carga automáticamente por `run_pentest.sh`. Si no usás Burp Suite Pro dejá `BURP_API_KEY` vacío.
+
+### 2. Levantar el container
 
 ```bash
 docker run -d \
@@ -59,23 +68,22 @@ docker run -d \
   --name hexstrike \
   --cap-add=NET_RAW \
   --cap-add=NET_ADMIN \
-  -e BURP_API_URL="http://host.docker.internal:1337" \
-  -e BURP_API_KEY="TU_API_KEY_AQUI" \
+  --env-file .env \
   gastonbarbaccia/hexstrikeia:latest
 ```
 
+> `--env-file .env` inyecta `BURP_API_URL` y `BURP_API_KEY` al container. Si preferís pasar las variables directamente, reemplazá `--env-file .env` por `-e BURP_API_URL="..." -e BURP_API_KEY="..."`.  
 > `-p 8118:8118` expone el proxy TLS bypass al host — necesario para que las tools locales (dalfox, nuclei, nikto, etc.) bypaseen el fingerprinting de WAFs como Cloudflare y Hostinger hcdn. Sin esto, las tools se cuelgan esperando respuestas bloqueadas silenciosamente.  
-> Si no usas Burp Suite Pro, podés omitir las variables `-e BURP_API_URL` y `-e BURP_API_KEY`.  
 > `--add-host=host.docker.internal:host-gateway` es necesario en Linux. En macOS/Windows ya viene por defecto.
 
-### 2. Verificar que está funcionando
+### 3. Verificar que está funcionando
 
 ```bash
 curl http://localhost:8888/health
 # Respuesta esperada: {"status":"healthy", ...}
 ```
 
-### 3. Conectar con Claude Code (MCP)
+### 4. Conectar con Claude Code (MCP)
 
 ```bash
 claude mcp add --transport http --scope user hexstrike-ai http://localhost:8888/mcp
@@ -186,7 +194,7 @@ Variables de entorno del host para la automatización:
 
 | Variable | Default | Descripción |
 |---|---|---|
-| `HEXSTRIKE_SCAN_DIR` | `~/hexstrikeai_scan` | Directorio de salida de reportes |
+| `HEXSTRIKE_SCAN_DIR` | `hexstrike_v2/reports` | Directorio de salida de reportes |
 | `PENTEST_TARGETS` | `~/.claude/pentest-targets.yaml` | Ruta al archivo de configuración de targets |
 | `GOPATH` | `~/go` | Ruta de instalación de herramientas Go |
 
@@ -236,17 +244,10 @@ Estructura completa del archivo:
 
 ```yaml
 settings:
-  output_dir: ~/hexstrikeai_scan   # donde se guardan los reportes
-  scan_intensity: aggressive       # light | medium | aggressive
-  threads: 10
-  timeout_per_site: 7200           # segundos máximos por sitio (2h)
-
   schedule:
-    enabled: true
     cron: "0 2 * * 1"             # schedule global: lunes 2AM
     keep_reports: 10              # cuántas sesiones conservar (0 = todas)
-    notify_email: ""              # ej: admin@empresa.com
-    notify_desktop: true          # notify-send al terminar
+    notify_email: ""              # ej: admin@empresa.com (vacío = sin email)
 
 targets:
 
@@ -255,8 +256,8 @@ targets:
     ip:   "1.2.3.4"
     scope:
       - "ejemplo.com"
-    authorization: "/ruta/al/documento-de-autorizacion.pdf"
     notes: "PHP + MySQL. WAF: Cloudflare. CMS: WordPress 6.x"
+    msf_exploit: false             # true = explotar vulnerabilidades confirmadas con Metasploit
     schedule: "0 3 * * *"         # override: diario 3AM (opcional, usa global si se omite)
     modules:
       - recon          # subfinder, amass, httpx, wafw00f, gau, waybackurls
@@ -369,10 +370,10 @@ PENTEST_TARGETS=/ruta/custom.yaml ./schedule_pentest.sh install
 
 ### Paso 3 — Ver los reportes
 
-Cada ejecución crea una sesión con timestamp en `~/hexstrikeai_scan/`:
+Cada ejecución crea una sesión con timestamp en `hexstrike_v2/reports/`:
 
 ```
-~/hexstrikeai_scan/
+hexstrike_v2/reports/
 ├── scheduler.log                    ← log del cron
 ├── 2026-05-29_02-00/                ← sesión del lunes 2AM
 │   ├── index.html                   ← dashboard con links a todos los reportes
@@ -397,7 +398,7 @@ Cada ejecución crea una sesión con timestamp en `~/hexstrikeai_scan/`:
 Abrir el reporte en el navegador:
 
 ```bash
-xdg-open ~/hexstrikeai_scan/$(ls -t ~/hexstrikeai_scan | head -1)/index.html
+xdg-open ~/Escritorio/hexstrike_v2/reports/$(ls -t ~/Escritorio/hexstrike_v2/reports | head -1)/index.html
 ```
 
 **Contenido de cada `report.html`:**
@@ -563,10 +564,8 @@ curl http://localhost:8888/health
 | Archivo | Descripción |
 |---|---|
 | `Dockerfile` | Build completa desde cero (Kali + 196 herramientas, ~15GB) — incluye TLS bypass integrado |
-| `tls_bypass_proxy.py` | Proxy TLS standalone (Python puro, sin dependencias externas) |
-| `tls_bypass_addon.py` | Addon alternativo para mitmproxy (referencia) |
+| `tls_bypass_addon.py` | Addon para mitmproxy — bypass TLS/fingerprinting integrado en el contenedor |
 | `hexstrike_server.py` | Servidor HexStrike con fix de autenticación Burp API key |
-| `install_hexstrike_tools.sh` | Instalador de herramientas sobre Kali existente (sin Docker) |
 | `run_pentest.sh` | Orquestador principal: llama a Claude Code con el prompt del análisis |
 | `schedule_pentest.sh` | Gestor de scheduling: instala/gestiona/ejecuta cron jobs por target |
 | `~/.claude/pentest-targets.yaml` | Configuración de targets, módulos y schedules _(fuera del repo — no commitear)_ |

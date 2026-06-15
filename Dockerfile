@@ -27,23 +27,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HEXSTRIKE_HOST=0.0.0.0 \
     HEXSTRIKE_PORT=8888 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    # ── TLS Bypass Proxy (bypasea fingerprinting de CDNs como Hostinger) ──
-    TLS_BYPASS_PORT=8118 \
-    http_proxy=http://127.0.0.1:8118 \
-    https_proxy=http://127.0.0.1:8118 \
-    HTTP_PROXY=http://127.0.0.1:8118 \
-    HTTPS_PROXY=http://127.0.0.1:8118 \
-    # Herramientas que leen estas vars específicas
-    MITMPROXY_ADDR=127.0.0.1:8118 \
-    PROXYCHAINS_PROXY=http://127.0.0.1:8118
+    PYTHONUNBUFFERED=1
 
 # ============================================================
 # CAPA 0 — Forzar IPv4 en apt
 #           Docker Desktop en Windows no tiene IPv6 funcional.
 #           Sin esto apt resuelve http.kali.org como IPv6 y falla.
 # ============================================================
-RUN printf 'Acquire::ForceIPv4 "true";\n' > /etc/apt/apt.conf.d/99force-ipv4
+RUN printf 'Acquire::ForceIPv4 "true";\nAcquire::http::Proxy "false";\nAcquire::https::Proxy "false";\n' > /etc/apt/apt.conf.d/99force-ipv4
 
 # ============================================================
 # CAPA 1 — ca-certificates para habilitar HTTPS
@@ -356,7 +347,7 @@ echo ""\n\
 \n\
 # ── TLS Bypass Proxy (mitmproxy + curl addon) ────────────────\n\
 echo "[*] Iniciando TLS Bypass Proxy en 0.0.0.0:8118..."\n\
-mitmdump \\\n\
+/opt/hexstrike-ai/hexstrike-env/bin/mitmdump \\\n\
     --listen-host 0.0.0.0 \\\n\
     --listen-port 8118 \\\n\
     --ssl-insecure \\\n\
@@ -407,8 +398,22 @@ RUN apt-get clean && \
 
 EXPOSE 8888
 
+# ── Variables de proxy: solo runtime (no build-time) ──────────
+# Estas vars hacen que todas las herramientas enruten via el proxy
+# TLS bypass (mitmproxy en 127.0.0.1:8118). No deben estar activas
+# durante el build o apt/curl/go falla intentando conectar al proxy.
+ENV TLS_BYPASS_PORT=8118 \
+    http_proxy=http://127.0.0.1:8118 \
+    https_proxy=http://127.0.0.1:8118 \
+    HTTP_PROXY=http://127.0.0.1:8118 \
+    HTTPS_PROXY=http://127.0.0.1:8118 \
+    no_proxy=127.0.0.1,localhost,host.docker.internal \
+    NO_PROXY=127.0.0.1,localhost,host.docker.internal \
+    MITMPROXY_ADDR=127.0.0.1:8118 \
+    PROXYCHAINS_PROXY=http://127.0.0.1:8118
+
 HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=5 \
-    CMD curl -f http://localhost:8888/health || exit 1
+    CMD curl --noproxy '*' -f http://localhost:8888/health || exit 1
 
 WORKDIR /opt/hexstrike-ai
 
