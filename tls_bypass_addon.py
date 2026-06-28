@@ -33,6 +33,7 @@ def request(flow: http.HTTPFlow) -> None:
     cmd = [
         "curl", "-sk",
         "--max-time", "30",
+        "--noproxy", "*",   # evitar loop: curl no debe enrutar por este mismo proxy
         "-A", UA,
         "-X", method,
         "-D", "-",        # headers en stdout

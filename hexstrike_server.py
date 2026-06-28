@@ -6880,7 +6880,7 @@ class EnhancedCommandExecutor:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                bufsize=1
+                bufsize=1,
             )
 
             pid = self.process.pid
@@ -8702,8 +8702,9 @@ def execute_command_with_recovery(tool_name: str, command: str, parameters: Dict
                 return result
 
             # Command failed, determine if we should attempt recovery
-            error_message = result.get("stderr", "Unknown error")
+            error_message = result.get("stderr") or result.get("error", "Unknown error")
             exception = Exception(error_message)
+            last_error = exception
 
             # Create context for error handler
             context = {
@@ -9959,7 +9960,7 @@ def execute_wpscan_scan(target, params):
     """Execute wpscan scan with optimized parameters"""
     try:
         additional_args = params.get('additional_args', '--enumerate p,t,u')
-        cmd_parts = ['wpscan', '--url', target]
+        cmd_parts = ['wpscan', '--url', target, '--no-update']
         if additional_args:
             cmd_parts.extend(additional_args.split())
 
@@ -10405,18 +10406,7 @@ def gobuster():
             command += f" {additional_args}"
 
         logger.info(f"📁 Starting Gobuster {mode} scan: {url}")
-
-        # Use intelligent error handling if enabled
-        if use_recovery:
-            tool_params = {
-                "target": url,
-                "mode": mode,
-                "wordlist": wordlist,
-                "additional_args": additional_args
-            }
-            result = execute_command_with_recovery("gobuster", command, tool_params)
-        else:
-            result = execute_command(command)
+        result = execute_command(command)
 
         logger.info(f"📊 Gobuster scan completed for {url}")
         return jsonify(result)
@@ -11196,7 +11186,7 @@ def wpscan():
                 "error": "URL parameter is required"
             }), 400
 
-        command = f"wpscan --url {url}"
+        command = f"wpscan --url {url} --no-update"
 
         if additional_args:
             command += f" {additional_args}"
@@ -11341,12 +11331,11 @@ def amass():
                 "error": "Domain parameter is required"
             }), 400
 
-        command = f"amass {mode}"
+        passive = params.get("passive", True)
+        command = f"amass {mode} -d {domain}"
 
-        if mode == "enum":
-            command += f" -d {domain}"
-        else:
-            command += f" -d {domain}"
+        if passive:
+            command += " -passive"
 
         if additional_args:
             command += f" {additional_args}"
@@ -12691,7 +12680,10 @@ def feroxbuster():
                 "error": "URL parameter is required"
             }), 400
 
-        command = f"feroxbuster -u {url} -w {wordlist} -t {threads}"
+        command = f"feroxbuster -u {url} -w {wordlist}"
+
+        if "-t " not in additional_args and "--threads" not in additional_args:
+            command += f" -t {threads}"
 
         if additional_args:
             command += f" {additional_args}"
@@ -13152,7 +13144,11 @@ def httpx():
             logger.warning("🌐 httpx called without target parameter")
             return jsonify({"error": "Target parameter is required"}), 400
 
-        command = f"httpx -l {target} -t {threads}"
+        import os as _os
+        if _os.path.exists(target):
+            command = f"httpx -l {target} -t {threads}"
+        else:
+            command = f"echo '{target}' | httpx -t {threads}"
 
         if probe:
             command += " -probe"
@@ -14226,20 +14222,22 @@ def browser_agent_endpoint():
 # BURP SUITE PRO — REST API integration
 # Requires: BURP_API_URL and BURP_API_KEY env vars
 # Burp config: Suite → REST API → All interfaces → port 1337
+# Default URL uses host.docker.internal so it works from inside Docker
 # ─────────────────────────────────────────────────────────────────
-import os as _os_burp
-_BURP_BASE = _os_burp.environ.get("BURP_API_URL", "http://127.0.0.1:1337")
-_BURP_KEY  = _os_burp.environ.get("BURP_API_KEY", "")
-# Burp Suite Pro coloca la API key en la URL: http://host:1337/{key}/v0.1/
-_BURP_URL  = f"{_BURP_BASE}/{_BURP_KEY}" if _BURP_KEY else _BURP_BASE
 
 @app.route("/api/tools/burpsuite", methods=["POST"])
 def burpsuite_pro():
     """Burp Suite Pro — integración via REST API"""
-    import time
+    import time, os as _os_burp
     params   = request.json or {}
     target   = params.get("target", "")
     scan_cfg = params.get("scan_type", "crawl_and_audit")
+
+    # Leer en cada request para que cambios de env vars surtan efecto sin reiniciar
+    _BURP_BASE = _os_burp.environ.get("BURP_API_URL", "http://host.docker.internal:1337")
+    _BURP_KEY  = _os_burp.environ.get("BURP_API_KEY", "")
+    # Burp Suite Pro coloca la API key en la URL: http://host:1337/{key}/v0.1/
+    _BURP_URL  = f"{_BURP_BASE}/{_BURP_KEY}" if _BURP_KEY else _BURP_BASE
 
     if not target:
         return jsonify({"error": "target requerido"}), 400

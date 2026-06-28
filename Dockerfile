@@ -71,6 +71,7 @@ RUN apt-get update -qq && \
     apt-get install -y --no-install-recommends --fix-missing \
         nmap masscan arp-scan nbtscan \
         smbclient enum4linux \
+        libpostal1 libpostal-dev libpostal-data \
         amass fierce dnsenum theharvester \
     && rm -rf /var/lib/apt/lists/*
 
@@ -287,11 +288,11 @@ RUN git clone --quiet --depth=1 \
 # CAPA 15 — Binarios standalone
 # ============================================================
 
-# Feroxbuster
+# Feroxbuster — filename pattern: x86_64-linux-feroxbuster.zip (NOT linux-x86_64)
 RUN FEROX_URL=$(curl -sf \
         https://api.github.com/repos/epi052/feroxbuster/releases/latest \
-        | grep -o '"browser_download_url":"[^"]*linux-x86_64[^"]*\.zip"' \
-        | head -1 | cut -d'"' -f4) && \
+        | python3 -c "import sys,json; data=json.load(sys.stdin); urls=[a['browser_download_url'] for a in data.get('assets',[]) if 'linux' in a['browser_download_url'] and 'x86_64' in a['browser_download_url'] and a['browser_download_url'].endswith('.zip')]; print(urls[0] if urls else '')" \
+        ) && \
     if [ -n "$FEROX_URL" ]; then \
         curl -fsSL "$FEROX_URL" -o /tmp/ferox.zip && \
         unzip -qo /tmp/ferox.zip feroxbuster -d /usr/local/bin/ && \
@@ -339,7 +340,6 @@ COPY hexstrike_server.py      /opt/hexstrike-ai/hexstrike_server.py
 COPY tls_bypass_addon.py     /opt/hexstrike-ai/tls_bypass_addon.py
 
 RUN printf '#!/bin/bash\n\
-set -e\n\
 echo "============================================"\n\
 echo " HexStrike AI MCP v6.0 — Kali Linux"\n\
 echo "============================================"\n\
@@ -356,8 +356,8 @@ echo "[*] Iniciando TLS Bypass Proxy en 0.0.0.0:8118..."\n\
     > /var/log/tls_bypass.log 2>&1 &\n\
 MITM_PID=$!\n\
 \n\
-# Esperar a que el proxy esté listo (max 10s)\n\
-for i in $(seq 1 10); do\n\
+# Esperar a que el proxy esté listo y haya generado su CA cert (max 15s)\n\
+for i in $(seq 1 15); do\n\
     if curl -s --max-time 1 http://127.0.0.1:8118 >/dev/null 2>&1; then\n\
         echo "[+] TLS Bypass Proxy listo (PID=$MITM_PID)"\n\
         break\n\
@@ -365,8 +365,20 @@ for i in $(seq 1 10); do\n\
     sleep 1\n\
 done\n\
 \n\
+# Instalar CA cert de mitmproxy para que todas las herramientas confíen en él\n\
+if [ -f /root/.mitmproxy/mitmproxy-ca-cert.pem ]; then\n\
+    cp /root/.mitmproxy/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/mitmproxy.crt\n\
+    update-ca-certificates --fresh >/dev/null 2>&1\n\
+    echo "[+] CA cert de mitmproxy instalado en el sistema"\n\
+else\n\
+    echo "[!] CA cert no encontrado, herramientas HTTPS pueden fallar"\n\
+fi\n\
+\n\
 # Configurar proxychains para usar el bypass proxy\n\
 printf "[ProxyList]\\nhttp 127.0.0.1 8118\\n" > /etc/proxychains4.conf\n\
+\n\
+# wpscan update removido del startup — actualizar manualmente con: docker exec -it hexstrike wpscan --update\n\
+echo "[*] wpscan DB update omitido (actualizar manualmente si es necesario)"\n\
 \n\
 # ── Health check de herramientas ─────────────────────────────\n\
 TOOLS="nmap nuclei sqlmap gobuster feroxbuster ffuf httpx subfinder nikto hydra john katana dalfox"\n\
